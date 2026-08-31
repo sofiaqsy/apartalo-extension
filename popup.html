@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>BCP → Apartalo</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <header>
+    <span class="logo">BCP <span class="arrow">→</span> Apartalo</span>
+    <button id="btnSettings" title="Configuración">⚙️</button>
+  </header>
+
+  <!-- Settings panel -->
+  <div id="settingsPanel" class="hidden">
+    <label>URL de Apartalo Core
+      <input id="apiUrl" type="url" placeholder="https://apartalo-core-9d633cdb9e1a.herokuapp.com" />
+    </label>
+    <label>Business ID
+      <input id="businessId" type="text" placeholder="finca-rosal" />
+    </label>
+    <label>Google Sheet URL (Apps Script)
+      <input id="sheetsUrl" type="url" placeholder="https://script.google.com/macros/s/..." />
+    </label>
+    <button id="btnSaveSettings" class="btn-primary">Guardar</button>
+    <button id="btnResetKeys" style="margin-top:6px;width:100%;background:#fee2e2;color:#991b1b;border:none;padding:6px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Resetear historial enviado a Sheets</button>
+  </div>
+
+  <!-- Drop zone -->
+  <div id="dropZone">
+    <div class="drop-icon">📄</div>
+    <p>Arrastra tu archivo<br><strong>Corriente Soles.xlsx</strong><br>o haz clic para seleccionar</p>
+    <input id="fileInput" type="file" accept=".xlsx,.xls" />
+  </div>
+
+  <!-- Status -->
+  <div id="status" class="hidden"></div>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+    <div class="results-header">
+      <span id="resultsSummary"></span>
+      <button id="btnConfirmAll" class="btn-primary btn-small">✓ Confirmar todos</button>
+    </div>
+    <div id="matchList"></div>
+    <div id="noMatches" class="hidden muted">No se encontraron coincidencias por monto.</div>
+  </div>
+
+  <script src="lib/xlsx.full.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

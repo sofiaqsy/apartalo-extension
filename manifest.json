@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "BCP → Apartalo Validator",
+  "version": "1.0.0",
+  "description": "Detecta tu descarga de BCP y valida pagos contra pedidos Apartalo",
+  "permissions": ["downloads", "storage"],
+  "host_permissions": [
+    "https://apartalo-core-9d633cdb9e1a.herokuapp.com/*",
+    "https://drive.usercontent.google.com/*",
+    "https://drive.google.com/*",
+    "https://unpkg.com/*",
+    "https://tessdata.projectnaptha.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "BCP → Apartalo"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [{
+    "resources": ["lib/tesseract-worker.min.js"],
+    "matches": ["<all_urls>"]
+  }]
+}
