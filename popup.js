@@ -2,7 +2,7 @@
 const DEFAULT_API = 'https://apartalo-core-9d633cdb9e1a.herokuapp.com';
 
 // ─── State ───────────────────────────────────────────────────────────────────
-let settings = { apiUrl: DEFAULT_API, businessId: '', sheetsUrl: '' };
+let settings = { apiUrl: DEFAULT_API, businessId: '', sheetsUrl: '', fincasFarmId: '' };
 let pendingOrders = [];
 let bcpTransfers = [];
 let matches = [];
@@ -28,13 +28,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadSettings() {
-  const stored = await chrome.storage.local.get(['apiUrl', 'businessId', 'sheetsUrl']);
-  settings.apiUrl     = stored.apiUrl     || DEFAULT_API;
-  settings.businessId = stored.businessId || '';
-  settings.sheetsUrl  = stored.sheetsUrl  || '';
-  $('apiUrl').value     = settings.apiUrl;
-  $('businessId').value = settings.businessId;
-  $('sheetsUrl').value  = settings.sheetsUrl;
+  const stored = await chrome.storage.local.get(['apiUrl', 'businessId', 'sheetsUrl', 'fincasFarmId']);
+  settings.apiUrl       = stored.apiUrl       || DEFAULT_API;
+  settings.businessId   = stored.businessId   || '';
+  settings.sheetsUrl    = stored.sheetsUrl    || '';
+  settings.fincasFarmId = stored.fincasFarmId || FINCAS.defaultFarmId;
+  $('apiUrl').value       = settings.apiUrl;
+  $('businessId').value   = settings.businessId;
+  $('sheetsUrl').value    = settings.sheetsUrl;
+  $('fincasFarmId').value = settings.fincasFarmId;
+  await showFincasUser();
+}
+
+async function showFincasUser() {
+  const email = await fincasEmail();
+  $('fincasUser').textContent = email ? `fincas: ${email}` : 'fincas: sin sesión';
+  $('btnFincasSignIn').classList.toggle('hidden', !!email);
+  $('btnFincasSignOut').classList.toggle('hidden', !email);
 }
 
 function bindEvents() {
@@ -52,9 +62,26 @@ function bindEvents() {
     settings.apiUrl     = $('apiUrl').value.trim().replace(/\/$/, '');
     settings.businessId = $('businessId').value.trim();
     settings.sheetsUrl  = $('sheetsUrl').value.trim();
+    settings.fincasFarmId = $('fincasFarmId').value.trim();
     await chrome.storage.local.set(settings);
     settingsPanel.classList.add('hidden');
     showStatus('Configuración guardada ✓', 'success');
+  });
+
+  // fincas login
+  $('btnFincasSignIn').addEventListener('click', async () => {
+    try {
+      const email = await fincasSignIn();
+      showStatus(`Sesión de fincas iniciada: ${email} ✓`, 'success');
+    } catch (err) {
+      showStatus(`No se pudo iniciar sesión en fincas: ${err?.message || err}`, 'error');
+    }
+    await showFincasUser();
+  });
+  $('btnFincasSignOut').addEventListener('click', async () => {
+    await fincasSignOut();
+    await showFincasUser();
+    showStatus('Sesión de fincas cerrada', 'success');
   });
 
   // Drop zone
@@ -105,6 +132,19 @@ async function processFile(file) {
       return;
     }
 
+    // Las mismas filas van a fincas, donde se cruzan solas con pagos, pedidos y retiros.
+    // Si falla, la hoja ya quedó guardada y el resto del proceso sigue.
+    let fincasSummary = '';
+    try {
+      const f = await sendToFincas(parsed.allRows, file.name, settings.fincasFarmId);
+      fincasSummary = f.skipped
+        ? `fincas: no enviado (${f.skipped}).`
+        : `fincas: ${f.added} nuevas, ${f.matched_now} cruzadas, ${f.still_to_match} por revisar.`;
+    } catch (err) {
+      fincasSummary = `fincas: error (${err?.message || err}).`;
+      console.error('sendToFincas error:', err);
+    }
+    lastSheetsSummary = [lastSheetsSummary, fincasSummary].filter(Boolean).join(' ');
 
     showStatus(`${lastSheetsSummary ? lastSheetsSummary + ' ' : ''}Encontradas ${bcpTransfers.length} transacciones. Cargando pedidos...`, 'loading');
     pendingOrders = await fetchPendingOrders();

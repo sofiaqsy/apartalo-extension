@@ -3,9 +3,16 @@
   "name": "BCP → Apartalo Validator",
   "version": "1.0.0",
   "description": "Detecta tu descarga de BCP y valida pagos contra pedidos Apartalo",
-  "permissions": ["downloads", "storage"],
+  "permissions": ["downloads", "storage", "identity"],
+  "oauth2": {
+    "client_id": "PEGAR_AQUI_EL_CLIENT_ID_DE_CHROME_EXTENSION.apps.googleusercontent.com",
+    "scopes": ["openid", "email", "profile"]
+  },
   "host_permissions": [
     "https://apartalo-core-9d633cdb9e1a.herokuapp.com/*",
+    "https://nrapvmbzovoimzepvinq.supabase.co/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*",
     "https://drive.usercontent.google.com/*",
     "https://drive.google.com/*",
     "https://unpkg.com/*",
