@@ -6,6 +6,8 @@ let settings = { apiUrl: DEFAULT_API, businessId: '', sheetsUrl: '' };
 let pendingOrders = [];
 let bcpTransfers = [];
 let matches = [];
+let lastSheetsSummary = ''; // resultado del último guardado en Sheets
+let manualCandidates = []; // rows in the "sin transferencia" alert, indexed by button
 let autoVerifiedCount = 0;
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
@@ -102,11 +104,9 @@ async function processFile(file) {
       settingsPanel.classList.remove('hidden');
       return;
     }
-    if (sheetsResult === 'skipped') {
-      console.log('[Sheets] Todas las filas ya fueron enviadas antes.');
-    }
 
-    showStatus(`Encontradas ${bcpTransfers.length} transacciones. Cargando pedidos...`, 'loading');
+
+    showStatus(`${lastSheetsSummary ? lastSheetsSummary + ' ' : ''}Encontradas ${bcpTransfers.length} transacciones. Cargando pedidos...`, 'loading');
     pendingOrders = await fetchPendingOrders();
 
     if (pendingOrders.length === 0) {
@@ -139,6 +139,15 @@ async function processFile(file) {
     );
 
     renderResults(unmatchedTransfers, unmatchedEvidencias, izipayOrders);
+
+    // Ingresos de la hoja que aún no dicen de quién son: se completan con los
+    // pedidos ya verificados. Va al final y sin bloquear nada.
+    const origen = await completarOrigenIngresos(pendingOrders);
+    const el = $('resultsSummary');
+    if (el) {
+      if (origen.assigned > 0) el.textContent += ` · ${origen.assigned} ingreso${origen.assigned > 1 ? 's' : ''} identificado${origen.assigned > 1 ? 's' : ''} en la hoja`;
+      if (origen.pending > 0) el.textContent += ` · ${origen.pending} sin origen`;
+    }
   } catch (err) {
     const msg = err?.message || String(err) || 'Error desconocido';
     showStatus(`Error: ${msg}`, 'error');
@@ -443,12 +452,78 @@ async function autoVerifyNoVoucherPayments(transfers, orders) {
       usedTransferIdxs.add(matchIdx);
       verified++;
       console.log(`[autoVerify] ✅ ${order.id} (${order.cliente}) S/${t.monto} — Op. ${opRef}`);
+      await asignarPedidoEnSheet(opRef, [order]);
     } catch (e) {
       console.warn(`[autoVerify] Excepción para ${order.id}:`, e.message);
     }
   }
 
   return verified;
+}
+
+// ─── Income-Outcome: cliente y pedido en la columna H al validar un ingreso ──
+// Se llama sólo después de que la verificación en Apartalo salió bien. Un fallo
+// aquí nunca debe deshacer ni bloquear la verificación, por eso no lanza.
+// Devuelve un texto corto para la tarjeta, o '' si no hubo nada que reportar.
+async function asignarPedidoEnSheet(operacion, orders) {
+  try {
+    if (!settings.sheetsUrl) return '';
+    const op = String(operacion || '').trim();
+    if (!/^\d+$/.test(op)) return '';     // AUTO-… / MANUAL-…: no hay fila bancaria que marcar
+    const texto = orders.map(o => `${o.cliente || 'Sin nombre'} · ${o.id}`).join(' + ');
+    const reply = await new Promise(resolve =>
+      chrome.runtime.sendMessage({ type: 'ASSIGN_PEDIDO', url: settings.sheetsUrl, items: [{ operacion: op, texto }] }, resolve)
+    );
+    console.log('[Sheets] Asignar pedido:', op, texto, reply);
+    if (!reply) return '';
+    if (reply.unsupported) return ' · actualiza el Apps Script para marcar la hoja';
+    if (reply.ok === false) return ' · no se pudo marcar la hoja';
+    if (reply.assigned > 0) return ' · hoja actualizada';
+    if (reply.skipped > 0) return ' · la hoja ya tenía otro texto';
+    if (reply.notFound > 0) return ' · no está en la hoja';
+    return '';
+  } catch (e) {
+    console.warn('[Sheets] No se pudo asignar el pedido:', e.message);
+    return '';
+  }
+}
+
+// ─── Ingresos ya existentes con la columna H vacía: identificar su origen ────
+// Cada operación ya VERIFICADA en Apartalo sabe a qué cliente y pedido pertenece.
+// Se las ofrece a la hoja, que sólo las aplica a ingresos con la columna H vacía
+// (nunca pisa texto). Devuelve { assigned, pending }: filas completadas y filas
+// de ingreso que siguen sin origen.
+async function completarOrigenIngresos(orders) {
+  const nada = { assigned: 0, pending: null };
+  try {
+    if (!settings.sheetsUrl) return nada;
+    const byOp = new Map();
+    for (const o of orders) {
+      for (const e of (o.evidencias || [])) {
+        const v = e.verificacion || {};
+        const op = String(v.operacionBCP || '').trim();
+        if (v.estado !== 'VERIFICADO' || !/^\d+$/.test(op)) continue;   // AUTO-/MANUAL-: sin fila bancaria
+        const key = op.replace(/^0+/, '');
+        if (!key) continue;
+        if (!byOp.has(key)) byOp.set(key, new Map());
+        byOp.get(key).set(o.id, o);
+      }
+    }
+    const items = [...byOp].map(([operacion, m]) => ({
+      operacion,
+      texto: [...m.values()].map(o => `${o.cliente || 'Sin nombre'} · ${o.id}`).join(' + '),
+    }));
+    if (items.length === 0) return nada;
+    const reply = await new Promise(resolve =>
+      chrome.runtime.sendMessage({ type: 'FILL_ORIGINS', url: settings.sheetsUrl, items }, resolve)
+    );
+    console.log('[Sheets] Origen de ingresos existentes:', reply);
+    if (!reply || reply.ok === false) return nada;
+    return { assigned: reply.assigned || 0, pending: typeof reply.pending === 'number' ? reply.pending : null };
+  } catch (e) {
+    console.warn('[Sheets] No se pudo completar el origen de los ingresos:', e.message);
+    return nada;
+  }
 }
 
 // ─── Save transfers to Google Sheet (Income-Outcome) ─────────────────────────
@@ -469,11 +544,18 @@ async function saveToGoogleSheet(transfers) {
     const reply = await new Promise(resolve =>
       chrome.runtime.sendMessage({ type: 'SAVE_TO_SHEETS', url: settings.sheetsUrl, rows }, resolve)
     );
-    console.log(`[Sheets] ✅ ${rows.length} filas enviadas a Income-Outcome`, reply);
+    console.log(`[Sheets] Respuesta de Income-Outcome (${rows.length} filas leídas):`, reply);
+    if (reply && reply.ok === false) throw new Error(reply.error || 'sin respuesta');
+    lastSheetsSummary = reply && typeof reply.added === 'number'
+      ? `Sheets: ${reply.added} nuevas, ${reply.skipped} ya estaban.` +
+        (reply.reconciled ? ` ${reply.reconciled} conciliadas con Gastos/Compras.` : '') +
+        (reply.legacy ? ' (Apps Script sin actualizar)' : '')
+      : '';
     return reply?.result || 'sent';
   } catch (e) {
     console.warn('[Sheets] Error guardando ingresos:', e.message);
-    showStatus(`⚠️ Error al guardar en Sheets: ${e.message}`, 'error');
+    lastSheetsSummary = `⚠️ Sheets: no se guardó (${e.message}).`;
+    showStatus(lastSheetsSummary, 'error');
     return 'error';
   }
 }
@@ -593,12 +675,46 @@ function matchPayments(transfers, orders) {
     return m;
   };
 
+  // Reference date for an evidencia, preferring the date the transfer actually
+  // happened over the date the voucher was uploaded. Clients often upload a
+  // voucher days after paying, so `evidencia.fecha` (upload time) lags the BCP
+  // statement date and must be compared with a looser, one-sided window.
+  const getEvidenciaRefDate = (evidencia, order) => {
+    const exact = evidencia.fechaOperacion
+      || evidencia.fechaTransferencia
+      || evidencia.verificacion?.fechaOperacion;
+    if (exact) {
+      const d = new Date(exact);
+      if (!isNaN(d)) return { date: toMidnight(d), exact: true };
+    }
+    // A pago row records when the payment was registered — closer to the real
+    // transfer date than the upload timestamp, but still not authoritative.
+    const idx = (order.evidencias || []).indexOf(evidencia);
+    const pago = (order.pagos || [])[idx];
+    if (pago?.fecha) {
+      const d = new Date(pago.fecha);
+      if (!isNaN(d)) return { date: toMidnight(d), exact: false };
+    }
+    if (evidencia.fecha) {
+      const d = new Date(evidencia.fecha);
+      if (!isNaN(d)) return { date: toMidnight(d), exact: false };
+    }
+    return { date: null, exact: false };
+  };
+
+  // Window when the reference date is the real operation date: symmetric and tight.
+  const EXACT_WINDOW_DAYS = 2;
+  // Window when the reference date is an upload/registration date: the transfer
+  // can precede it by days, but should never come meaningfully after it.
+  const LAG_BEFORE_DAYS = 10;
+  const LAG_AFTER_DAYS  = 2;
+
   // Pass 2: fallback — collect all valid (evidencia, transfer) pairs with date diff
   const fallbackPairs = [];
   for (const { order, evidencia, expectedAmount } of candidates) {
     const evKey = `${order.id}:${evidencia.id}`;
     if (usedEvidencias.has(evKey)) continue; // already matched by OCR
-    const evDate = evidencia.fecha ? toMidnight(new Date(evidencia.fecha)) : null;
+    const { date: evDate, exact: evDateExact } = getEvidenciaRefDate(evidencia, order);
 
     for (let i = 0; i < transfers.length; i++) {
       if (usedTransfers.has(i)) continue;
@@ -608,8 +724,14 @@ function matchPayments(transfers, orders) {
       if (evDate && t.fecha) {
         const bcpDate = parseBCPDate(t.fecha);
         if (bcpDate) {
-          dateDiff = Math.abs((toMidnight(bcpDate) - evDate) / 86400000);
-          if (dateDiff > 2) continue;
+          // Positive = BCP transfer happened before the evidencia reference date
+          const delta = (evDate - toMidnight(bcpDate)) / 86400000;
+          if (evDateExact) {
+            if (Math.abs(delta) > EXACT_WINDOW_DAYS) continue;
+          } else if (delta > LAG_BEFORE_DAYS || delta < -LAG_AFTER_DAYS) {
+            continue;
+          }
+          dateDiff = Math.abs(delta);
         }
       }
       fallbackPairs.push({ order, evidencia, evKey, transferIdx: i, dateDiff });
@@ -648,7 +770,10 @@ function matchPayments(transfers, orders) {
     byClient.get(key).push(c);
   }
 
-  const MAX_DATE_DIFF_DAYS = 5;
+  // Same asymmetry as Pass 2: order dates are registration dates, so the BCP
+  // transfer may precede them by several days but should not follow them.
+  const MAX_DATE_BEFORE_DAYS = LAG_BEFORE_DAYS;
+  const MAX_DATE_AFTER_DAYS  = LAG_AFTER_DAYS;
 
   // Helper: get the best date from an order to compare against BCP transfer
   // Uses most recent pago date, then fechaPago, then order creation date
@@ -675,7 +800,8 @@ function matchPayments(transfers, orders) {
         ? clientCandidates.filter(c => {
             const od = getOrderDate(c.order);
             if (!od) return true; // no date info → allow
-            return Math.abs((od - bcpDate) / 86400000) <= MAX_DATE_DIFF_DAYS;
+            const delta = (toMidnight(od) - toMidnight(bcpDate)) / 86400000;
+            return delta <= MAX_DATE_BEFORE_DAYS && delta >= -MAX_DATE_AFTER_DAYS;
           })
         : clientCandidates;
       if (nearby.length < 2) continue;
@@ -714,7 +840,9 @@ function matchPayments(transfers, orders) {
   // Collect evidencias with a voucher that got no match — only within BCP date window ±5 days
   const bcpDatesAll = transfers.map(t => parseBCPDate(t.fecha)).filter(Boolean);
   const bcpMin = bcpDatesAll.length ? new Date(Math.min(...bcpDatesAll) - 5 * 86400000) : null;
-  const bcpMax = bcpDatesAll.length ? new Date(Math.max(...bcpDatesAll) + 5 * 86400000) : null;
+  const bcpMax = bcpDatesAll.length
+    ? new Date(Math.max(...bcpDatesAll) + LAG_BEFORE_DAYS * 86400000)
+    : null;
 
   const unmatchedEvidencias = [];
   for (const { order, evidencia } of candidates) {
@@ -888,12 +1016,22 @@ function renderAlerts(unmatchedTransfers = [], unmatchedEvidencias = [], izipayO
     note.innerHTML = `
       <div class="unmatched-title">ℹ️ ${unmatchedEvidencias.length} pedido${unmatchedEvidencias.length > 1 ? 's' : ''} con comprobante sin transferencia en el estado de cuenta</div>
       <ul class="unmatched-list">
-        ${unmatchedEvidencias.map(({ order, evidencia }) => {
+        ${unmatchedEvidencias.map(({ order, evidencia }, i) => {
           const fecha = evidencia.fecha ? new Date(evidencia.fecha).toLocaleDateString('es-PE') : '—';
-          return `<li><strong>${order.id}</strong> · ${order.cliente || 'Sin nombre'} · S/ ${parseFloat(order.total).toFixed(2)} · ${fecha}</li>`;
+          return `<li id="unmatched-ev-${i}">
+            <strong>${order.id}</strong> · ${order.cliente || 'Sin nombre'} · S/ ${parseFloat(order.total).toFixed(2)} · ${fecha}
+            <span class="unmatched-actions">
+              <button class="btn-primary btn-small" data-action="manual-verify" data-idx="${i}">Validar</button>
+            </span>
+          </li>`;
         }).join('')}
       </ul>
     `;
+    // Keep the rows so a click can resolve its index back to the order
+    manualCandidates = unmatchedEvidencias;
+    note.querySelectorAll('[data-action="manual-verify"]').forEach(btn => {
+      btn.addEventListener('click', () => manualVerify(Number(btn.dataset.idx)));
+    });
     matchList.appendChild(note);
   }
 
@@ -930,9 +1068,10 @@ async function confirmMatch(i) {
       for (const { order, evidencia } of m.group) {
         await verifyEvidencia(order.id, evidencia.id, opRef, parseFloat(order.total), m.transfer.fecha);
       }
+      const nota = await asignarPedidoEnSheet(opRef, m.group.map(g => g.order));
       m.confirmed = true;
       card.classList.add('confirmed');
-      card.querySelector('.match-actions').innerHTML = '<span class="confirmed-badge">✓ Todos verificados</span>';
+      card.querySelector('.match-actions').innerHTML = `<span class="confirmed-badge">✓ Todos verificados${nota}</span>`;
     } catch (err) {
       card.querySelector('.match-actions').innerHTML =
         `<span style="color:red;font-size:11px">Error: ${err.message}</span>
@@ -970,9 +1109,10 @@ async function confirmMatch(i) {
       // Tiene comprobante propio — solo marcar como VERIFICADO
       await verifyEvidencia(m.order.id, m.evidencia.id, opRef, m.transfer.monto, m.transfer.fecha);
     }
+    const nota = await asignarPedidoEnSheet(opRef, [m.order]);
     m.confirmed = true;
     card.classList.add('confirmed');
-    card.querySelector('.match-actions').innerHTML = '<span class="confirmed-badge">✓ Verificado</span>';
+    card.querySelector('.match-actions').innerHTML = `<span class="confirmed-badge">✓ Verificado${nota}</span>`;
   } catch (err) {
     card.querySelector('.match-actions').innerHTML =
       `<span style="color:red;font-size:11px">Error: ${err.message}</span>
@@ -994,6 +1134,47 @@ async function verifyEvidencia(pedidoId, evidenciaId, operacionBCP, montoVerific
     throw new Error(`${res.status}: ${text}`);
   }
   return res.json();
+}
+
+// ─── Manually validate a payment with no matching BCP transfer ─────────────
+// Marks the evidencia VERIFICADO on the operator's word alone: there is no bank
+// row to point at, so it is tagged MANUAL-<orderId> to stay distinguishable
+// from statement-backed verifications.
+async function manualVerify(i) {
+  const entry = manualCandidates[i];
+  if (!entry || entry.confirmed) return;
+  const { order, evidencia } = entry;
+
+  const monto = parseFloat(order.total) || 0;
+  const ok = confirm(
+    `¿Validar manualmente este pedido?\n\n` +
+    `Pedido: ${order.id}\n` +
+    `Cliente: ${order.cliente || 'Sin nombre'}\n` +
+    `Monto: S/ ${monto.toFixed(2)}\n\n` +
+    `Se marcará como VERIFICADO sin respaldo del estado de cuenta.`
+  );
+  if (!ok) return;
+
+  const row     = $(`unmatched-ev-${i}`);
+  const actions = row?.querySelector('.unmatched-actions');
+  if (actions) actions.innerHTML = '<span class="muted">Guardando...</span>';
+
+  try {
+    const opRef = `MANUAL-${order.id}`;
+    const fechaOperacion = evidencia.fecha
+      ? new Date(evidencia.fecha).toLocaleDateString('es-PE')
+      : '';
+    await verifyEvidencia(order.id, evidencia.id, opRef, monto, fechaOperacion);
+    entry.confirmed = true;
+    if (actions) actions.innerHTML = '<span class="confirmed-badge">✓ Validado manualmente</span>';
+  } catch (err) {
+    if (actions) {
+      actions.innerHTML =
+        `<span style="color:red;font-size:11px">Error: ${err.message}</span>
+         <button class="btn-primary btn-small" data-action="manual-retry">Reintentar</button>`;
+      actions.querySelector('[data-action="manual-retry"]').addEventListener('click', () => manualVerify(i));
+    }
+  }
 }
 
 async function confirmAll() {

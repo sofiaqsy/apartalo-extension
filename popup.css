@@ -203,3 +203,11 @@ header {
   color: #b91c1c;
   font-weight: 600;
 }
+
+/* Manual validation controls inside the unmatched alerts */
+.unmatched-list li { margin-bottom: 6px; }
+.unmatched-actions {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: 6px; vertical-align: middle;
+}
+.unmatched-actions .btn-small { padding: 3px 8px; font-size: 10px; }
