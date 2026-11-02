@@ -80,7 +80,7 @@ async function sendToFincas(allRows, fileName, farmId) {
       operation: r.operacion,
     }))
     .filter(r => r.date && r.amount);
-  const res = await fetch(`${FINCAS.supabaseUrl}/rest/v1/rpc/record_bank_movements`, {
+  const res = await fetch(`${FINCAS.supabaseUrl}/rest/v1/rpc/record_bank_movements_v2`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

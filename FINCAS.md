@@ -1,7 +1,7 @@
 # Envío de movimientos a fincas (31 de octubre de 2026)
 
 Además de guardar el archivo de BCP en la hoja Income-Outcome, la extensión envía las mismas filas a
-fincas (`record_bank_movements`). La base no repite líneas y las cruza sola con los pagos de los
+fincas (`record_bank_movements_v2`). La base no repite líneas y las cruza sola con los pagos de los
 formularios, los pedidos de Apartalo y los retiros a caja. Lo que queda aparece en
 `finance_bank_to_match`. Si fincas falla o no hay sesión, la hoja y la validación de pedidos siguen igual.
 
@@ -22,3 +22,5 @@ formularios, los pedidos de Apartalo y los retiros a caja. Lo que queda aparece 
 - `fincas-config.js`: URL y clave pública de fincas, clave web de Firebase (públicas: sólo identifican
   el proyecto) y el ID de Finca Rosal.
 - En el navegador (`chrome.storage.local`): el token de la sesión y el de renovación. Ninguna clave maestra.
+
+Desde el 1 de noviembre de 2026 la app nunca pide el número de operación: al llegar el archivo del BCP, la base cruza cada pago por número de operación o, si no lo tiene, por mismo monto, dirección y fecha (±3 días, sólo si hay un único candidato), y copia el número de operación del banco al pago.
