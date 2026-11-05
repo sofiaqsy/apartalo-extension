@@ -5,7 +5,7 @@
   "description": "Detecta tu descarga de BCP y valida pagos contra pedidos Apartalo",
   "permissions": ["downloads", "storage", "identity"],
   "oauth2": {
-    "client_id": "PEGAR_AQUI_EL_CLIENT_ID_DE_CHROME_EXTENSION.apps.googleusercontent.com",
+    "client_id": "580564332826-v58btc28ue0ntd3m9qi25n295jn57836.apps.googleusercontent.com",
     "scopes": ["openid", "email", "profile"]
   },
   "host_permissions": [
