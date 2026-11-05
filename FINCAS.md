@@ -6,6 +6,12 @@ La base no repite líneas y las cruza sola con los pagos de la app, los pedidos 
 a caja. En la app, Finanzas → Movimientos muestra cada línea con su estado: Conciliado, Falta en la app o
 No está en el banco. Sin sesión de fincas el archivo no se procesa: la extensión pide iniciar sesión.
 
+Desde el 5 de noviembre de 2026 (General Manager: la validación se hace en la app; sin campos que no hacen
+falta) la extensión **sólo guarda**: ya no busca pedidos, no lee comprobantes (OCR), no verifica pagos ni
+muestra coincidencias, y no tiene ⚙️. Arriba está la sesión (Iniciar sesión con Google / Salir); debajo, el
+archivo. La finca es siempre Finca Rosal (`FINCAS.defaultFarmId`). Cada línea se concilia en la app, en
+Finanzas → Movimientos: al conciliar un pedido, la app marca su comprobante como verificado.
+
 ## Configuración (una vez)
 
 1. Google Cloud, proyecto **apartalo-10146** → APIs y servicios → Credenciales → Crear credenciales →
@@ -15,8 +21,7 @@ No está en el banco. Sin sesión de fincas el archivo no se procesa: la extensi
    `oauth2.client_id`, y recargar la extensión.
 3. En Supabase, proyecto **fincas** → Authentication → Third-party auth → Firebase activado con el
    proyecto `apartalo-10146`.
-4. En la extensión → ⚙️ → **Iniciar sesión con Google** con una cuenta que sea miembro de Finca Rosal
-   en Apartalo. "Finca en fincas (ID)" ya trae Finca Rosal.
+4. En la extensión → **Iniciar sesión con Google** con una cuenta que sea dueña de Finca Rosal en Apartalo.
 
 ## Qué guarda
 

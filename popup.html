@@ -9,26 +9,13 @@
 
   <header>
     <span class="logo">BCP <span class="arrow">→</span> Apartalo</span>
-    <button id="btnSettings" title="Configuración">⚙️</button>
   </header>
 
-  <!-- Settings panel -->
-  <div id="settingsPanel" class="hidden">
-    <label>URL de Apartalo Core
-      <input id="apiUrl" type="url" placeholder="https://apartalo-core-9d633cdb9e1a.herokuapp.com" />
-    </label>
-    <label>Business ID
-      <input id="businessId" type="text" placeholder="finca-rosal" />
-    </label>
-    <label>Finca en fincas (ID)
-      <input id="fincasFarmId" type="text" placeholder="c1d391b2-... (Finca Rosal)" />
-    </label>
-    <div id="fincasLogin" class="muted" style="margin:6px 0;font-size:12px;">
-      <span id="fincasUser">fincas: sin sesión</span>
-      <button id="btnFincasSignIn" type="button" style="margin-left:6px;">Iniciar sesión con Google</button>
-      <button id="btnFincasSignOut" type="button" class="hidden" style="margin-left:6px;">Salir</button>
-    </div>
-    <button id="btnSaveSettings" class="btn-primary">Guardar</button>
+  <!-- Sesión de fincas: la única configuración (General Manager, 5 nov 2026: sin campos que no hacen falta) -->
+  <div id="session">
+    <span id="fincasUser">Sin sesión</span>
+    <button id="btnFincasSignIn" type="button" class="btn-primary btn-small hidden">Iniciar sesión con Google</button>
+    <button id="btnFincasSignOut" type="button" class="btn-link hidden">Salir</button>
   </div>
 
   <!-- Drop zone -->
@@ -41,15 +28,7 @@
   <!-- Status -->
   <div id="status" class="hidden"></div>
 
-  <!-- Results -->
-  <div id="results" class="hidden">
-    <div class="results-header">
-      <span id="resultsSummary"></span>
-      <button id="btnConfirmAll" class="btn-primary btn-small">✓ Confirmar todos</button>
-    </div>
-    <div id="matchList"></div>
-    <div id="noMatches" class="hidden muted">No se encontraron coincidencias por monto.</div>
-  </div>
+  <p id="hint" class="muted">Las líneas se guardan en fincas. Se concilian en la app: Finanzas → Movimientos.</p>
 
   <script src="lib/xlsx.full.min.js"></script>
   <script src="fincas-config.js"></script>

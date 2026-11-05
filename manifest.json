@@ -1,27 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "BCP → Apartalo Validator",
-  "version": "1.0.0",
-  "description": "Detecta tu descarga de BCP y valida pagos contra pedidos Apartalo",
-  "permissions": ["downloads", "storage", "identity"],
+  "name": "BCP → Apartalo",
+  "version": "1.1.0",
+  "description": "Guarda los movimientos del archivo del BCP en fincas; se concilian en la app Apartalo",
+  "permissions": [
+    "downloads",
+    "storage",
+    "identity"
+  ],
   "oauth2": {
     "client_id": "580564332826-v58btc28ue0ntd3m9qi25n295jn57836.apps.googleusercontent.com",
-    "scopes": ["openid", "email", "profile"]
+    "scopes": [
+      "openid",
+      "email",
+      "profile"
+    ]
   },
   "host_permissions": [
-    "https://apartalo-core-9d633cdb9e1a.herokuapp.com/*",
     "https://nrapvmbzovoimzepvinq.supabase.co/*",
     "https://identitytoolkit.googleapis.com/*",
-    "https://securetoken.googleapis.com/*",
-    "https://drive.usercontent.google.com/*",
-    "https://drive.google.com/*",
-    "https://unpkg.com/*",
-    "https://tessdata.projectnaptha.com/*",
-    "https://script.google.com/*",
-    "https://script.googleusercontent.com/*"
+    "https://securetoken.googleapis.com/*"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "action": {
     "default_popup": "popup.html",
@@ -29,9 +30,5 @@
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "web_accessible_resources": [{
-    "resources": ["lib/tesseract-worker.min.js"],
-    "matches": ["<all_urls>"]
-  }]
+  }
 }
