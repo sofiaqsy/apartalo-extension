@@ -1,9 +1,10 @@
-# Envío de movimientos a fincas (31 de octubre de 2026)
+# Envío de movimientos a fincas (31 de octubre de 2026; sólo fincas desde el 5 de noviembre de 2026)
 
-Además de guardar el archivo de BCP en la hoja Income-Outcome, la extensión envía las mismas filas a
-fincas (`record_bank_movements_v2`). La base no repite líneas y las cruza sola con los pagos de los
-formularios, los pedidos de Apartalo y los retiros a caja. Lo que queda aparece en
-`finance_bank_to_match`. Si fincas falla o no hay sesión, la hoja y la validación de pedidos siguen igual.
+La extensión guarda cada línea del archivo de BCP sólo en fincas, la base oficial
+(`record_bank_movements_v2`); ya no escribe en la hoja Income-Outcome (General Manager, 5 nov 2026).
+La base no repite líneas y las cruza sola con los pagos de la app, los pedidos de Apartalo y los retiros
+a caja. En la app, Finanzas → Movimientos muestra cada línea con su estado: Conciliado, Falta en la app o
+No está en el banco. Sin sesión de fincas el archivo no se procesa: la extensión pide iniciar sesión.
 
 ## Configuración (una vez)
 

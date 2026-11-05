@@ -2,11 +2,10 @@
 const DEFAULT_API = 'https://apartalo-core-9d633cdb9e1a.herokuapp.com';
 
 // ─── State ───────────────────────────────────────────────────────────────────
-let settings = { apiUrl: DEFAULT_API, businessId: '', sheetsUrl: '', fincasFarmId: '' };
+let settings = { apiUrl: DEFAULT_API, businessId: '', fincasFarmId: '' };
 let pendingOrders = [];
 let bcpTransfers = [];
 let matches = [];
-let lastSheetsSummary = ''; // resultado del último guardado en Sheets
 let manualCandidates = []; // rows in the "sin transferencia" alert, indexed by button
 let autoVerifiedCount = 0;
 
@@ -28,14 +27,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadSettings() {
-  const stored = await chrome.storage.local.get(['apiUrl', 'businessId', 'sheetsUrl', 'fincasFarmId']);
+  const stored = await chrome.storage.local.get(['apiUrl', 'businessId', 'fincasFarmId']);
   settings.apiUrl       = stored.apiUrl       || DEFAULT_API;
   settings.businessId   = stored.businessId   || '';
-  settings.sheetsUrl    = stored.sheetsUrl    || '';
   settings.fincasFarmId = stored.fincasFarmId || FINCAS.defaultFarmId;
   $('apiUrl').value       = settings.apiUrl;
   $('businessId').value   = settings.businessId;
-  $('sheetsUrl').value    = settings.sheetsUrl;
   $('fincasFarmId').value = settings.fincasFarmId;
   await showFincasUser();
 }
@@ -53,15 +50,9 @@ function bindEvents() {
     settingsPanel.classList.toggle('hidden');
   });
 
-  $('btnResetKeys').addEventListener('click', async () => {
-    await chrome.storage.local.remove('sentSheetKeys');
-    showStatus('Historial de Sheets reseteado ✓', 'success');
-  });
-
   $('btnSaveSettings').addEventListener('click', async () => {
     settings.apiUrl     = $('apiUrl').value.trim().replace(/\/$/, '');
     settings.businessId = $('businessId').value.trim();
-    settings.sheetsUrl  = $('sheetsUrl').value.trim();
     settings.fincasFarmId = $('fincasFarmId').value.trim();
     await chrome.storage.local.set(settings);
     settingsPanel.classList.add('hidden');
@@ -124,33 +115,28 @@ async function processFile(file) {
       return;
     }
 
-    // Save all rows (ingresos + gastos) to Google Sheet Income-Outcome
-    const sheetsResult = await saveToGoogleSheet(parsed.allRows);
-    if (sheetsResult === 'no_url') {
-      showStatus('⚠️ Sheets URL no configurada. Ve a ⚙️ y agrega la URL del Apps Script.', 'error');
-      settingsPanel.classList.remove('hidden');
+    // Cada línea del banco se guarda sólo en fincas, la base oficial (General Manager, 5 nov 2026: ya no en la hoja).
+    // La base no repite líneas y las cruza sola con los pagos de la app, los pedidos y los retiros a caja.
+    let fincasSummary;
+    try {
+      const f = await sendToFincas(parsed.allRows, file.name, settings.fincasFarmId);
+      if (f.skipped) {
+        showStatus(`⚠️ No se guardó en fincas (${f.skipped}). Ve a ⚙️ e inicia sesión con Google.`, 'error');
+        settingsPanel.classList.remove('hidden');
+        return;
+      }
+      fincasSummary = `fincas: ${f.added} nuevas, ${f.already_saved} ya estaban, ${f.matched_now} cruzadas, ${f.still_to_match} sin cruzar.`;
+    } catch (err) {
+      console.error('sendToFincas error:', err);
+      showStatus(`⚠️ No se guardó en fincas: ${err?.message || err}`, 'error');
       return;
     }
 
-    // Las mismas filas van a fincas, donde se cruzan solas con pagos, pedidos y retiros.
-    // Si falla, la hoja ya quedó guardada y el resto del proceso sigue.
-    let fincasSummary = '';
-    try {
-      const f = await sendToFincas(parsed.allRows, file.name, settings.fincasFarmId);
-      fincasSummary = f.skipped
-        ? `fincas: no enviado (${f.skipped}).`
-        : `fincas: ${f.added} nuevas, ${f.matched_now} cruzadas, ${f.still_to_match} por revisar.`;
-    } catch (err) {
-      fincasSummary = `fincas: error (${err?.message || err}).`;
-      console.error('sendToFincas error:', err);
-    }
-    lastSheetsSummary = [lastSheetsSummary, fincasSummary].filter(Boolean).join(' ');
-
-    showStatus(`${lastSheetsSummary ? lastSheetsSummary + ' ' : ''}Encontradas ${bcpTransfers.length} transacciones. Cargando pedidos...`, 'loading');
+    showStatus(`${fincasSummary} Encontradas ${bcpTransfers.length} transacciones. Cargando pedidos...`, 'loading');
     pendingOrders = await fetchPendingOrders();
 
     if (pendingOrders.length === 0) {
-      showStatus('No hay pedidos pendientes de pago en Apartalo.', 'success');
+      showStatus(`${fincasSummary} No hay pedidos pendientes de pago en Apartalo.`, 'success');
       return;
     }
 
@@ -179,15 +165,6 @@ async function processFile(file) {
     );
 
     renderResults(unmatchedTransfers, unmatchedEvidencias, izipayOrders);
-
-    // Ingresos de la hoja que aún no dicen de quién son: se completan con los
-    // pedidos ya verificados. Va al final y sin bloquear nada.
-    const origen = await completarOrigenIngresos(pendingOrders);
-    const el = $('resultsSummary');
-    if (el) {
-      if (origen.assigned > 0) el.textContent += ` · ${origen.assigned} ingreso${origen.assigned > 1 ? 's' : ''} identificado${origen.assigned > 1 ? 's' : ''} en la hoja`;
-      if (origen.pending > 0) el.textContent += ` · ${origen.pending} sin origen`;
-    }
   } catch (err) {
     const msg = err?.message || String(err) || 'Error desconocido';
     showStatus(`Error: ${msg}`, 'error');
@@ -492,7 +469,6 @@ async function autoVerifyNoVoucherPayments(transfers, orders) {
       usedTransferIdxs.add(matchIdx);
       verified++;
       console.log(`[autoVerify] ✅ ${order.id} (${order.cliente}) S/${t.monto} — Op. ${opRef}`);
-      await asignarPedidoEnSheet(opRef, [order]);
     } catch (e) {
       console.warn(`[autoVerify] Excepción para ${order.id}:`, e.message);
     }
@@ -501,106 +477,6 @@ async function autoVerifyNoVoucherPayments(transfers, orders) {
   return verified;
 }
 
-// ─── Income-Outcome: cliente y pedido en la columna H al validar un ingreso ──
-// Se llama sólo después de que la verificación en Apartalo salió bien. Un fallo
-// aquí nunca debe deshacer ni bloquear la verificación, por eso no lanza.
-// Devuelve un texto corto para la tarjeta, o '' si no hubo nada que reportar.
-async function asignarPedidoEnSheet(operacion, orders) {
-  try {
-    if (!settings.sheetsUrl) return '';
-    const op = String(operacion || '').trim();
-    if (!/^\d+$/.test(op)) return '';     // AUTO-… / MANUAL-…: no hay fila bancaria que marcar
-    const texto = orders.map(o => `${o.cliente || 'Sin nombre'} · ${o.id}`).join(' + ');
-    const reply = await new Promise(resolve =>
-      chrome.runtime.sendMessage({ type: 'ASSIGN_PEDIDO', url: settings.sheetsUrl, items: [{ operacion: op, texto }] }, resolve)
-    );
-    console.log('[Sheets] Asignar pedido:', op, texto, reply);
-    if (!reply) return '';
-    if (reply.unsupported) return ' · actualiza el Apps Script para marcar la hoja';
-    if (reply.ok === false) return ' · no se pudo marcar la hoja';
-    if (reply.assigned > 0) return ' · hoja actualizada';
-    if (reply.skipped > 0) return ' · la hoja ya tenía otro texto';
-    if (reply.notFound > 0) return ' · no está en la hoja';
-    return '';
-  } catch (e) {
-    console.warn('[Sheets] No se pudo asignar el pedido:', e.message);
-    return '';
-  }
-}
-
-// ─── Ingresos ya existentes con la columna H vacía: identificar su origen ────
-// Cada operación ya VERIFICADA en Apartalo sabe a qué cliente y pedido pertenece.
-// Se las ofrece a la hoja, que sólo las aplica a ingresos con la columna H vacía
-// (nunca pisa texto). Devuelve { assigned, pending }: filas completadas y filas
-// de ingreso que siguen sin origen.
-async function completarOrigenIngresos(orders) {
-  const nada = { assigned: 0, pending: null };
-  try {
-    if (!settings.sheetsUrl) return nada;
-    const byOp = new Map();
-    for (const o of orders) {
-      for (const e of (o.evidencias || [])) {
-        const v = e.verificacion || {};
-        const op = String(v.operacionBCP || '').trim();
-        if (v.estado !== 'VERIFICADO' || !/^\d+$/.test(op)) continue;   // AUTO-/MANUAL-: sin fila bancaria
-        const key = op.replace(/^0+/, '');
-        if (!key) continue;
-        if (!byOp.has(key)) byOp.set(key, new Map());
-        byOp.get(key).set(o.id, o);
-      }
-    }
-    const items = [...byOp].map(([operacion, m]) => ({
-      operacion,
-      texto: [...m.values()].map(o => `${o.cliente || 'Sin nombre'} · ${o.id}`).join(' + '),
-    }));
-    if (items.length === 0) return nada;
-    const reply = await new Promise(resolve =>
-      chrome.runtime.sendMessage({ type: 'FILL_ORIGINS', url: settings.sheetsUrl, items }, resolve)
-    );
-    console.log('[Sheets] Origen de ingresos existentes:', reply);
-    if (!reply || reply.ok === false) return nada;
-    return { assigned: reply.assigned || 0, pending: typeof reply.pending === 'number' ? reply.pending : null };
-  } catch (e) {
-    console.warn('[Sheets] No se pudo completar el origen de los ingresos:', e.message);
-    return nada;
-  }
-}
-
-// ─── Save transfers to Google Sheet (Income-Outcome) ─────────────────────────
-async function saveToGoogleSheet(transfers) {
-  if (!settings.sheetsUrl) return 'no_url';
-  try {
-    const rows = transfers.map(t => ({
-      fecha:       t.fecha,
-      tipo:        t.tipo === 'gasto' ? 'Gasto' : 'Ingreso',
-      categoria:   t.tipo === 'gasto' ? 'Operativo' : 'Venta',
-      monto:       t.monto,
-      descripcion: t.descripcion || 'Transferencia BCP',
-      cuenta:      'BCP',
-      operacion:   t.operacion || '',
-      pedido:      '',
-    }));
-    // Send via background service worker to bypass CORS
-    const reply = await new Promise(resolve =>
-      chrome.runtime.sendMessage({ type: 'SAVE_TO_SHEETS', url: settings.sheetsUrl, rows }, resolve)
-    );
-    console.log(`[Sheets] Respuesta de Income-Outcome (${rows.length} filas leídas):`, reply);
-    if (reply && reply.ok === false) throw new Error(reply.error || 'sin respuesta');
-    lastSheetsSummary = reply && typeof reply.added === 'number'
-      ? `Sheets: ${reply.added} nuevas, ${reply.skipped} ya estaban.` +
-        (reply.reconciled ? ` ${reply.reconciled} conciliadas con Gastos/Compras.` : '') +
-        (reply.legacy ? ' (Apps Script sin actualizar)' : '')
-      : '';
-    return reply?.result || 'sent';
-  } catch (e) {
-    console.warn('[Sheets] Error guardando ingresos:', e.message);
-    lastSheetsSummary = `⚠️ Sheets: no se guardó (${e.message}).`;
-    showStatus(lastSheetsSummary, 'error');
-    return 'error';
-  }
-}
-
-// ─── Subset-sum helper (max `limit` items, returns first combination found) ───
 function findSubsetSum(candidates, target, limit) {
   // Sort descending by amount to prune search tree faster
   const sorted = [...candidates].sort((a, b) => b.expectedAmount - a.expectedAmount);
@@ -1108,10 +984,9 @@ async function confirmMatch(i) {
       for (const { order, evidencia } of m.group) {
         await verifyEvidencia(order.id, evidencia.id, opRef, parseFloat(order.total), m.transfer.fecha);
       }
-      const nota = await asignarPedidoEnSheet(opRef, m.group.map(g => g.order));
       m.confirmed = true;
       card.classList.add('confirmed');
-      card.querySelector('.match-actions').innerHTML = `<span class="confirmed-badge">✓ Todos verificados${nota}</span>`;
+      card.querySelector('.match-actions').innerHTML = '<span class="confirmed-badge">✓ Todos verificados</span>';
     } catch (err) {
       card.querySelector('.match-actions').innerHTML =
         `<span style="color:red;font-size:11px">Error: ${err.message}</span>
@@ -1149,10 +1024,9 @@ async function confirmMatch(i) {
       // Tiene comprobante propio — solo marcar como VERIFICADO
       await verifyEvidencia(m.order.id, m.evidencia.id, opRef, m.transfer.monto, m.transfer.fecha);
     }
-    const nota = await asignarPedidoEnSheet(opRef, [m.order]);
     m.confirmed = true;
     card.classList.add('confirmed');
-    card.querySelector('.match-actions').innerHTML = `<span class="confirmed-badge">✓ Verificado${nota}</span>`;
+    card.querySelector('.match-actions').innerHTML = '<span class="confirmed-badge">✓ Verificado</span>';
   } catch (err) {
     card.querySelector('.match-actions').innerHTML =
       `<span style="color:red;font-size:11px">Error: ${err.message}</span>
